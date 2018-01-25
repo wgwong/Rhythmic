@@ -19,12 +19,23 @@ public class AudioReader : MonoBehaviour {
     public GameObject[] g;
     public float[] band;
 
+    public ArrayList leftLaneBalls;
+    public ArrayList midLaneBalls;
+    public ArrayList rightLaneBalls;
+    int numLanes = 3;
+    public Bumper leftBumper;
+    public Bumper midBumper;
+    public Bumper rightBumper;
+
     Dictionary<int, Vector3[]> positions;
+    Dictionary<int, bool[]> beatMap;
+    Dictionary<int, bool> instantiatedBeatMap; //prevent duplicate beat creation
 
     // Use this for initialization
     void Start () {
         audioSource = GetComponent<AudioSource>();
         clip = audioSource.clip;
+
         fft = new LomontFFT();
 		float[] samples = new float[clip.samples * clip.channels];
 		clip.GetData (samples, 0);
@@ -113,8 +124,16 @@ public class AudioReader : MonoBehaviour {
                 file.WriteLine("\n");
             }
         }*/
+        leftLaneBalls = new ArrayList();
+        midLaneBalls = new ArrayList();
+        rightLaneBalls = new ArrayList();
+        leftBumper = new Bumper(new Vector3(12, 0, 2), Color.red);
+        midBumper = new Bumper(new Vector3(14, 0, 2), Color.blue);
+        rightBumper = new Bumper(new Vector3(16, 0, 2), Color.green);
 
-        Debug.Log("positions keys: " + positions.Keys.ToString());
+        beatMap = new Dictionary<int, bool[]>();
+        instantiatedBeatMap = new Dictionary<int, bool>();
+        createBeatMap();
 
         audioSource.Play();
         
@@ -124,6 +143,7 @@ public class AudioReader : MonoBehaviour {
     {
         int k = 0;
         int crossover = 2;
+        float scale = .125f;
         for (int i = 0; i < freqData.Length; i++)
         {
             float d = freqData[i];
@@ -137,7 +157,7 @@ public class AudioReader : MonoBehaviour {
                 k++;
                 crossover *= 2; // frequency crossover point for each band.
                 float height = band[k] * 32;
-                Vector3 tmp = new Vector3(g[k].transform.position.x, height, g[k].transform.position.z);
+                Vector3 tmp = new Vector3(g[k].transform.position.x, height * scale, g[k].transform.position.z);
                 g[k].transform.position = tmp;
                 band[k] = 0;
 
@@ -152,24 +172,80 @@ public class AudioReader : MonoBehaviour {
         }
     }
 
+    void createBeatMap()
+    {
+        foreach (var entry in positions)
+        {
+            int timePos = entry.Key;
+            Vector3[] objPos = entry.Value;
+            bool[] activeBeats = new bool[] { false, false, false };
+
+            float[] threshold = new float[g.Length];
+            threshold[0] = 0;
+            threshold[1] = 24;
+            threshold[2] = 21f;
+            threshold[3] = 12;
+            threshold[4] = 6.5f;
+            threshold[5] = 4.5f;
+            threshold[6] = 2;
+            threshold[7] = 1;
+            threshold[8] = 0.5f;
+            threshold[9] = 0;
+            //left 3 = leftLane & so forth
+            if (objPos[1].y > threshold[1] || objPos[2].y > threshold[2] || objPos[3].y > threshold[3])
+            {
+                activeBeats[0] = true;
+            }
+            beatMap.Add(timePos, activeBeats);
+        }
+    }
+
 	// Update is called once per frame
 	void Update () {
-
+        float avgFrameRate = Time.frameCount / Time.time;
         int currentSample = audioSource.timeSamples;
         int pos = Mathf.FloorToInt( ((float) currentSample) / steps);
         int curStep = pos * steps * clip.channels;
-        
+        int speed = 10;
+
         /*
         Debug.Log("currentSample: " + currentSample);
         Debug.Log("pos: " + pos);
         Debug.Log("curStep: " + curStep);
         */
+        //Debug.Log("framerate: " + avgFrameRate);
 
+        //visualizer
         Vector3[] displayPositions = positions[curStep];
 
         for (int i = 0; i < displayPositions.Length; i++)
         {
             g[i].transform.position = displayPositions[i];
+        }
+
+
+
+        //beats
+        //lookahead to see if we need to instantiate future beats to drop down
+        int lookAheadSeconds = 3;
+        int lookAheadFrames = (clip.frequency * clip.channels) * lookAheadSeconds;
+        bool[] beats = beatMap[curStep + lookAheadFrames];
+        //make sure we didn't already check this frame
+        //checking left lane
+        if (beats[0] && !instantiatedBeatMap.ContainsKey(curStep + lookAheadFrames))
+        {
+            Beat beat = new Beat(new Vector3(12, lookAheadSeconds * speed, 0), new Vector3(0, -speed, 0), Color.red); //30 = how long it takes to drop
+
+            leftLaneBalls.Add(beat);
+            instantiatedBeatMap.Add(curStep + lookAheadFrames, true); //prevent duplicate instantiating
+        }
+
+        foreach (Beat beat in leftLaneBalls) {
+            if (beat.getGameObject().transform.position.y < -5)
+            {
+                Destroy(beat.getGameObject());
+                leftLaneBalls.Remove(beat); //buggy, can't iterate & remove at same time
+            }
         }
     }
 }
